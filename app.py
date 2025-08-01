@@ -1,88 +1,150 @@
 import streamlit as st
 from transformers import pipeline
-import time
 from utils import get_emoji, generate_ai_rating, generate_appreciation
+from summary import generate_summary
+from voice_input import transcribe_audio
+from download import generate_pdf
+import time, uuid
 
+# -------------------- SESSION SETUP --------------------
+if "user" not in st.session_state:
+    st.session_state.user = None
+if "role" not in st.session_state:
+    st.session_state.role = None
+if "stories" not in st.session_state:
+    st.session_state.stories = []
+
+# -------------------- LOGIN SECTION --------------------
+def login_section():
+    st.sidebar.title("🔐 Login Panel")
+    username = st.sidebar.text_input("Username")
+    password = st.sidebar.text_input("Password", type="password")
+    if st.sidebar.button("Login"):
+        if username == "admin" and password == "admin":
+            st.session_state.user = "admin"
+            st.session_state.role = "admin"
+            st.success("Logged in as Admin!")
+        elif username:
+            st.session_state.user = username
+            st.session_state.role = "guest"
+            st.success(f"Logged in as {username}")
+        else:
+            st.error("Invalid credentials")
+
+    if st.sidebar.button("Logout"):
+        st.session_state.user = None
+        st.session_state.role = None
+        st.experimental_rerun()
+
+# -------------------- SENTIMENT MODEL --------------------
 @st.cache_resource
 def load_sentiment_model():
     try:
-        sentiment_pipeline = pipeline("sentiment-analysis", model="ai4bharat/indic-bert-sentiment")
+        return pipeline("sentiment-analysis", model="ai4bharat/indic-bert-sentiment")
     except:
-        sentiment_pipeline = pipeline("sentiment-analysis")
-    return sentiment_pipeline
+        return pipeline("sentiment-analysis")
 
 sentiment_model = load_sentiment_model()
 
-st.set_page_config(page_title="ManaKatha - Telugu Stories", layout="centered")
-st.title("📖 మన కథ - Telugu Story Sharing with AI")
-st.markdown("**తెలుగు లో మీ కథను పంచుకోండి** – AI మీ కథను చదివి అభినందనలు, స్పందన, రేటింగ్ ఇస్తుంది.")
+# -------------------- STORY SUBMISSION --------------------
+def story_submission():
+    st.title("📖 మన కథ - Share Your Telugu Story")
 
-with st.form("story_form"):
-    title = st.text_input("కథ శీర్షిక (Title)")
-    tags = st.text_input("ట్యాగులు (Tags like ప్రేమ, బాళ్యం, బాధ, etc.)")
-    story = st.text_area("మీ కథను ఇక్కడ వ్రాయండి...", height=300)
-    is_public = st.checkbox("ఇది పబ్లిక్ కథగా ప్రచురించాలా?", value=True)
-    submitted = st.form_submit_button("కథ పంపించు")
+    st.markdown("🎙️ **Optional: Upload Telugu voice (MP3)**")
+    audio_file = st.file_uploader("Upload MP3", type=["mp3"])
+    voice_story = ""
+    if audio_file:
+        st.info("Transcribing audio...")
+        voice_story = transcribe_audio(audio_file)
+        st.success("Audio transcribed!")
 
-if submitted:
-    with st.spinner("AI మీ కథ చదువుతోంది..."):
-        time.sleep(1)
-        sentiment_result = sentiment_model(story[:512])[0]
-        sentiment = sentiment_result['label'].lower()
-        emoji = get_emoji(sentiment)
-        compliment = generate_appreciation(sentiment)
-        rating, emo_score, clarity_score = generate_ai_rating(story)
+    with st.form(key="story_form_submit"):
+        title = st.text_input("కథ శీర్షిక")
+        tags = st.text_input("ట్యాగులు (comma separated)")
+        story = st.text_area("మీ కథను వ్రాయండి", value=voice_story, height=250)
+        is_public = st.checkbox("ఇది పబ్లిక్ కథగా ప్రచురించాలా?", value=True)
+        submit = st.form_submit_button("కథ పంపించు")
 
-    st.success("✅ మీ కథకి స్పందన వచ్చింది!")
-    st.markdown(f"### 🗣️ అభినందన: **{compliment}** {emoji}")
-    st.markdown(f"### 🌟 రేటింగ్: **{rating}/10**")
-    st.markdown(f"- భావోద్వేగం: {emo_score}/10\n- స్పష్టత: {clarity_score}/10")
+    if submit and title and story:
+        with st.spinner("AI మీ కథను విశ్లేషిస్తోంది..."):
+            sentiment_result = sentiment_model(story[:512])[0]
+            sentiment = sentiment_result["label"].lower()
+            emoji = get_emoji(sentiment)
+            compliment = generate_appreciation(sentiment)
+            rating, e_score, c_score = generate_ai_rating(story)
+            summary = generate_summary(story)
 
-    if is_public:
-        st.markdown("📚 **మీ కథను పబ్లిక్ గాలరీలో జోడించాం.** (ఇది డేటాబేస్ కి వదిలిన తర్వాత వర్తిస్తుంది)")
+        story_obj = {
+            "id": str(uuid.uuid4())[:8],
+            "title": title,
+            "tags": tags,
+            "story": story,
+            "summary": summary,
+            "rating": rating,
+            "emotion": e_score,
+            "clarity": c_score,
+            "sentiment": sentiment,
+            "emoji": emoji,
+            "likes": 0,
+            "views": 0,
+            "public": is_public,
+            "author": st.session_state.user or "guest"
+        }
+        st.session_state.stories.append(story_obj)
 
-import streamlit as st
-from transformers import pipeline
-import time
-from utils import get_emoji, generate_ai_rating, generate_appreciation
+        st.success("✅ కథ సబ్మిట్ అయింది!")
+        st.markdown(f"### 🗣️ {compliment} {emoji}")
+        st.markdown(f"### 🌟 రేటింగ్: {rating}/10")
+        st.markdown(f"- భావోద్వేగం: {e_score}/10\n- స్పష్టత: {c_score}/10")
+        st.markdown(f"### 🧾 సంక్షిప్తంగా: {summary}")
 
-@st.cache_resource
-def load_sentiment_model():
-    try:
-        sentiment_pipeline = pipeline("sentiment-analysis", model="ai4bharat/indic-bert-sentiment")
-    except:
-        sentiment_pipeline = pipeline("sentiment-analysis")
-    return sentiment_pipeline
+# -------------------- GALLERY --------------------
+def public_gallery():
+    st.title("📚 పబ్లిక్ కథల గ్యాలరీ")
+    tags = list({t.strip() for s in st.session_state.stories if s["public"] for t in s["tags"].split(",")})
+    selected = st.selectbox("ట్యాగ్ ద్వారా కథలు చూడండి", ["All"] + tags)
 
-sentiment_model = load_sentiment_model()
+    for s in st.session_state.stories:
+        if not s["public"]:
+            continue
+        if selected != "All" and selected not in s["tags"]:
+            continue
 
-st.set_page_config(page_title="ManaKatha - Telugu Stories", layout="centered")
-st.title("📖 మన కథ - Telugu Story Sharing with AI")
-st.markdown("**తెలుగు లో మీ కథను పంచుకోండి** – AI మీ కథను చదివి అభినందనలు, స్పందన, రేటింగ్ ఇస్తుంది.")
+        s["views"] += 1
+        st.subheader(f"{s['title']} {s['emoji']}")
+        st.caption(f"👤 {s['author']} | 💬 {s['tags']} | ⭐ {s['rating']}/10 | 👀 {s['views']} | ❤️ {s['likes']}")
+        st.markdown(f"**సంక్షిప్తంగా**: {s['summary']}")
 
-with st.form("story_form"):
-    title = st.text_input("కథ శీర్షిక (Title)")
-    tags = st.text_input("ట్యాగులు (Tags like ప్రేమ, బాళ్యం, బాధ, etc.)")
-    story = st.text_area("మీ కథను ఇక్కడ వ్రాయండి...", height=300)
-    is_public = st.checkbox("ఇది పబ్లిక్ కథగా ప్రచురించాలా?", value=True)
-    submitted = st.form_submit_button("కథ పంపించు")
+        col1, col2 = st.columns(2)
+        if col1.button(f"❤️ Like", key=f"like_{s['id']}"):
+            s["likes"] += 1
+            st.experimental_rerun()
+        if col2.button("📄 Download PDF", key=f"pdf_{s['id']}"):
+            path = generate_pdf(s, f"{s['title']}.pdf")
+            with open(path, "rb") as f:
+                st.download_button("⬇️ Click to Download", f, file_name=f"{s['title']}.pdf")
 
-if submitted:
-    with st.spinner("AI మీ కథ చదువుతోంది..."):
-        time.sleep(1)
-        sentiment_result = sentiment_model(story[:512])[0]
-        sentiment = sentiment_result['label'].lower()
-        emoji = get_emoji(sentiment)
-        compliment = generate_appreciation(sentiment)
-        rating, emo_score, clarity_score = generate_ai_rating(story)
+# -------------------- ADMIN PANEL --------------------
+def admin_panel():
+    st.title("🛠️ Admin Panel")
+    for i, s in enumerate(st.session_state.stories):
+        st.markdown(f"**{s['title']}** by {s['author']} - [ID: {s['id']}]")
+        col1, col2 = st.columns(2)
+        if col1.button("❌ Delete", key=f"del_{s['id']}"):
+            st.session_state.stories.pop(i)
+            st.success("Story deleted.")
+            st.experimental_rerun()
+        if col2.button("🚫 Toggle Public", key=f"pub_{s['id']}"):
+            s["public"] = not s["public"]
+            st.experimental_rerun()
 
-    st.success("✅ మీ కథకి స్పందన వచ్చింది!")
-    st.markdown(f"### 🗣️ అభినందన: **{compliment}** {emoji}")
-    st.markdown(f"### 🌟 రేటింగ్: **{rating}/10**")
-    st.markdown(f"- భావోద్వేగం: {emo_score}/10\n- స్పష్టత: {clarity_score}/10")
+# -------------------- MAIN --------------------
+login_section()
+nav = st.sidebar.radio("Navigate", ["📤 Submit Story", "📚 View Gallery", "🛠️ Admin Panel" if st.session_state.role == "admin" else ""])
 
-    if is_public:
-        st.markdown("📚 **మీ కథను పబ్లిక్ గాలరీలో జోడించాం.** (ఇది డేటాబేస్ కి వదిలిన తర్వాత వర్తిస్తుంది)")
-
-
-
+if nav == "📤 Submit Story":
+    story_submission()
+elif nav == "📚 View Gallery":
+    public_gallery()
+elif nav == "🛠️ Admin Panel":
+    admin_panel()
