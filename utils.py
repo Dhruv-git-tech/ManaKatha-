@@ -21,3 +21,4 @@ def generate_appreciation(sentiment):
         "negative": ["గొప్ప నిబద్ధత చూపించావ్.", "కష్టం అయినా, బాగా వివరించావ్."],
     }
     return random.choice(compliments.get(sentiment, ["బాగుంది!"]))
+
